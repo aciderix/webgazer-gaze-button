@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Check, CircleHelp, Clipboard, Copy, Eye, Gauge, Pause, Play, RotateCcw, ShieldCheck, Sparkles, Target, Trash2, Waves } from "lucide-react";
+import { Camera, Check, CircleHelp, Clipboard, Copy, Eye, Gauge, Menu, Pause, Play, RotateCcw, ShieldCheck, Sparkles, Target, Trash2, Waves, X } from "lucide-react";
 
 type GazePoint = { x: number; y: number };
 type WebGazerApi = {
@@ -64,6 +64,7 @@ export default function Home() {
   const [adaptiveMode, setAdaptiveMode] = useState(true);
   const [lastEvent, setLastEvent] = useState("En attente de la caméra");
   const [diagnostics, setDiagnostics] = useState<string[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
   const diagnosticsRef = useRef<string[]>([]);
 
   const gazeRef = useRef<GazePoint | null>(null);
@@ -303,6 +304,7 @@ export default function Home() {
   }, []);
 
   const startCalibration = useCallback(() => {
+    setMenuOpen(false);
     if (!tracking) {
       void startTracking();
       return;
@@ -410,12 +412,13 @@ export default function Home() {
   }, [calibrating, permissionState, tracking]);
 
   const handleMainAction = () => {
+    setMenuOpen(false);
     setActivated(false);
     setLastEvent("Action réinitialisée · prêt pour un nouveau regard");
   };
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${menuOpen ? "menu-open" : "menu-closed"}`}>
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
       <header className="topbar">
@@ -426,6 +429,10 @@ export default function Home() {
             <h1>Focus Field</h1>
           </div>
         </div>
+        <button className="menu-toggle" type="button" aria-label={menuOpen ? "Fermer le menu" : "Ouvrir le menu"} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
+          {menuOpen ? <X size={19} /> : <Menu size={19} />}
+          <span>{menuOpen ? "Fermer" : "Menu"}</span>
+        </button>
         <div className="topbar-meta">
           <span className={`status-dot ${tracking ? "live" : ""}`} />
           <span>{statusLabel}</span>
