@@ -17,6 +17,7 @@ type WebGazerApi = {
   setRegression?: (name: string) => WebGazerApi;
   setTracker?: (name: string) => WebGazerApi;
   setCameraConstraints?: (constraints: MediaStreamConstraints) => Promise<WebGazerApi> | WebGazerApi;
+  setStaticVideo?: (video: HTMLVideoElement) => WebGazerApi;
   recordScreenPosition?: (x: number, y: number, eventType?: string) => WebGazerApi;
 };
 
@@ -73,6 +74,8 @@ export default function Home() {
   const calibrationTimerRef = useRef<number | null>(null);
   const calibrationPulseRef = useRef<number | null>(null);
   const webgazerRef = useRef<WebGazerApi | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const staticVideoRef = useRef<HTMLVideoElement | null>(null);
   const orientationRef = useRef(0);
 
   const calibrationPoint = CALIBRATION_POINTS[calibrationStep] ?? CALIBRATION_POINTS[0];
@@ -214,6 +217,20 @@ export default function Home() {
       // encore créé son élément vidéo et son implémentation appelle alors
       // setVideoViewerSize() sur un élément null.
       appendDiagnostics("Contraintes WebGazer par défaut utilisées jusqu’à la création du flux vidéo");
+      const nativeStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "user" } } });
+      cameraStreamRef.current = nativeStream;
+      const nativeVideo = document.createElement("video");
+      nativeVideo.muted = true;
+      nativeVideo.autoplay = true;
+      nativeVideo.playsInline = true;
+      nativeVideo.style.display = "none";
+      nativeVideo.srcObject = nativeStream;
+      document.body.appendChild(nativeVideo);
+      staticVideoRef.current = nativeVideo;
+      await nativeVideo.play();
+      const settings = nativeStream.getVideoTracks()[0]?.getSettings();
+      appendDiagnostics(`Flux natif ouvert · ${settings?.width ?? "?"}×${settings?.height ?? "?"} · WebGazer utilisera ce flux`);
+      api.setStaticVideo?.(nativeVideo);
       api.applyKalmanFilter?.(true).saveDataAcrossSessions?.(true);
       api.showVideoPreview?.(true).showFaceOverlay?.(false).showFaceFeedbackBox?.(false);
       api.setGazeListener((data) => {
@@ -249,23 +266,7 @@ export default function Home() {
         appendDiagnostics(["Démarrage WebGazer échoué", ...describeError(firstError)]);
         throw firstError;
       }
-      const video = document.querySelector<HTMLVideoElement>("#webgazerVideoFeed");
-      if (!video) {
-        appendDiagnostics("WebGazer terminé sans élément vidéo #webgazerVideoFeed");
-        throw new DOMException("WebGazer n’a créé aucun élément vidéo", "UnknownError");
-      }
-      video.setAttribute("playsinline", "true");
-      video.muted = true;
-      video.autoplay = true;
-      try {
-        await video.play();
-        const stream = video.srcObject instanceof MediaStream ? video.srcObject : null;
-        appendDiagnostics(`Élément vidéo prêt · état=${video.readyState} · pistes=${stream?.getVideoTracks().length ?? 0}`);
-      } catch (playError) {
-        appendDiagnostics(["Échec lecture du flux vidéo", ...describeError(playError)]);
-        throw playError;
-      }
-      appendDiagnostics("WebGazer démarré avec succès · flux vidéo disponible");
+      appendDiagnostics("WebGazer démarré avec succès · flux vidéo natif disponible");
       setTracking(true);
       setPermissionState("ready");
       setLastEvent("Suivi actif · calibration disponible");
@@ -289,6 +290,10 @@ export default function Home() {
     webgazerRef.current?.clearGazeListener?.();
     webgazerRef.current?.end?.();
     webgazerRef.current = null;
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    staticVideoRef.current?.remove();
+    staticVideoRef.current = null;
     setTracking(false);
     setCalibrating(false);
     setHoldProgress(0);
@@ -392,6 +397,8 @@ export default function Home() {
     if (calibrationPulseRef.current) window.clearInterval(calibrationPulseRef.current);
     webgazerRef.current?.clearGazeListener?.();
     webgazerRef.current?.end?.();
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    staticVideoRef.current?.remove();
   }, []);
 
   const statusLabel = useMemo(() => {
