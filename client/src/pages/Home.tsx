@@ -89,7 +89,7 @@ export default function Home() {
         return;
       }
       const script = document.createElement("script");
-      script.src = "/webgazer.js";
+      script.src = `${import.meta.env.BASE_URL}webgazer.js`;
       script.async = true;
       script.dataset.webgazer = "local";
       script.onload = () => window.webgazer ? resolve(window.webgazer) : reject(new Error("WebGazer indisponible"));
@@ -150,11 +150,21 @@ export default function Home() {
       api.setGazeListener((data) => {
         if (data) processGaze(data);
       });
-      await api.begin((error) => {
+      const begin = () => api.begin((error) => {
         console.error("WebGazer camera failure", error);
         setPermissionState("blocked");
         setLastEvent("Accès caméra refusé par le navigateur");
       });
+      try {
+        await begin();
+      } catch (firstError) {
+        // Certains navigateurs custom renvoient UnknownError lorsque les
+        // contraintes idéales sont refusées. Une seconde demande minimale
+        // permet alors au navigateur de choisir sa caméra disponible.
+        console.warn("Retrying camera with minimal constraints", firstError);
+        await api.setCameraConstraints?.({ audio: false, video: true });
+        await begin();
+      }
       const video = document.querySelector<HTMLVideoElement>("#webgazerVideoFeed");
       if (video) {
         video.setAttribute("playsinline", "true");
