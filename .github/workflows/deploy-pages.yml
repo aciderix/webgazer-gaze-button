@@ -33,6 +33,8 @@ jobs:
         run: pnpm build
         env:
           GITHUB_PAGES: "true"
+      - name: Add SPA fallback for direct links
+        run: cp dist/public/index.html dist/public/404.html
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:

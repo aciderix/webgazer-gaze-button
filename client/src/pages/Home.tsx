@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Check, CircleHelp, Eye, Gauge, Pause, Play, RotateCcw, ShieldCheck, Sparkles, Target, Waves } from "lucide-react";
+import { Camera, Check, CircleHelp, Clipboard, Copy, Eye, Gauge, Pause, Play, RotateCcw, ShieldCheck, Sparkles, Target, Trash2, Waves } from "lucide-react";
 
 type GazePoint = { x: number; y: number };
 type WebGazerApi = {
@@ -63,6 +63,7 @@ export default function Home() {
   const [adaptiveMode, setAdaptiveMode] = useState(true);
   const [lastEvent, setLastEvent] = useState("En attente de la caméra");
   const [diagnostics, setDiagnostics] = useState<string[]>([]);
+  const diagnosticsRef = useRef<string[]>([]);
 
   const gazeRef = useRef<GazePoint | null>(null);
   const smoothRef = useRef<GazePoint | null>(null);
@@ -77,14 +78,29 @@ export default function Home() {
   const calibrationPoint = CALIBRATION_POINTS[calibrationStep] ?? CALIBRATION_POINTS[0];
   const calibrationPercent = Math.round((calibrationStep / CALIBRATION_POINTS.length) * 100);
 
+  const appendDiagnostics = useCallback((entries: string | string[]) => {
+    const values = Array.isArray(entries) ? entries : [entries];
+    const stamped = values.map((entry) => `[${new Date().toISOString()}] ${entry}`);
+    diagnosticsRef.current = [...diagnosticsRef.current, ...stamped].slice(-160);
+    setDiagnostics(diagnosticsRef.current);
+  }, []);
+
+  const describeError = useCallback((error: unknown) => {
+    const name = error instanceof DOMException ? error.name : error instanceof Error ? error.name : "UnknownError";
+    const message = error instanceof Error && error.message ? error.message : "aucun message fourni par le navigateur";
+    const details = error && typeof error === "object" ? JSON.stringify(error, Object.getOwnPropertyNames(error)) : String(error);
+    return [`Erreur exacte : ${name}`, `Message : ${message}`, `Détails : ${details}`];
+  }, []);
+
   const collectDiagnostics = useCallback(async (error?: unknown) => {
     const lines = [
       `Contexte sécurisé : ${window.isSecureContext ? "oui" : "non"}`,
-      `Protocole : ${window.location.protocol} · hôte : ${window.location.hostname}`,
+      `URL : ${window.location.href}`,
+      `Base Vite : ${import.meta.env.BASE_URL}`,
       `Fenêtre principale : ${window.top === window.self ? "oui" : "non (iframe/webview)"}`,
       `mediaDevices : ${navigator.mediaDevices ? "présent" : "absent"}`,
       `getUserMedia : ${navigator.mediaDevices && "getUserMedia" in navigator.mediaDevices ? "présent" : "absent"}`,
-      `Navigateur : ${navigator.userAgent.slice(0, 110)}`,
+      `Navigateur : ${navigator.userAgent}`,
     ];
     try {
       const permission = await navigator.permissions?.query({ name: "camera" as PermissionName });
@@ -96,18 +112,29 @@ export default function Home() {
       const devices = await navigator.mediaDevices?.enumerateDevices();
       const cameras = devices?.filter((device) => device.kind === "videoinput") ?? [];
       lines.push(`Caméras détectées : ${cameras.length}${cameras.some((camera) => camera.label) ? " · libellés autorisés" : " · libellés masqués"}`);
+      cameras.forEach((camera, index) => lines.push(`Caméra ${index + 1} : ${camera.label || "libellé masqué"} · ${camera.deviceId ? "ID présent" : "ID absent"}`));
     } catch (deviceError) {
       lines.push(`Énumération périphériques : ${deviceError instanceof Error ? deviceError.message : "échec"}`);
     }
-    if (error) {
-      const name = error instanceof DOMException ? error.name : error instanceof Error ? error.name : "UnknownError";
-      const message = error instanceof Error && error.message ? error.message : "aucun message fourni par le navigateur";
-      lines.push(`Erreur exacte : ${name}`);
-      lines.push(`Message : ${message}`);
-    }
-    setDiagnostics(lines);
+    if (error) lines.push(...describeError(error));
+    appendDiagnostics(lines);
     return lines;
-  }, []);
+  }, [appendDiagnostics, describeError]);
+
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => appendDiagnostics(`Erreur globale : ${event.message || "erreur inconnue"} · ${event.filename || "source inconnue"}:${event.lineno || 0}`);
+    const onRejection = (event: PromiseRejectionEvent) => appendDiagnostics(["Promise rejetée", ...describeError(event.reason)]);
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => { window.removeEventListener("error", onError); window.removeEventListener("unhandledrejection", onRejection); };
+  }, [appendDiagnostics, describeError]);
+
+  const clearDiagnostics = () => { diagnosticsRef.current = []; setDiagnostics([]); };
+  const copyDiagnostics = async () => {
+    const text = diagnosticsRef.current.join("\n");
+    try { await navigator.clipboard.writeText(text); appendDiagnostics("Journal copié dans le presse-papiers"); }
+    catch { appendDiagnostics("Copie impossible : autorisez l’accès au presse-papiers"); }
+  };
 
   const runNativeCameraTest = useCallback(async () => {
     setLastEvent("Test natif de la caméra en cours…");
@@ -117,7 +144,7 @@ export default function Home() {
       const settings = track?.getSettings();
       stream.getTracks().forEach((item) => item.stop());
       setLastEvent("Test natif réussi · le blocage vient probablement de WebGazer ou de la webview");
-      setDiagnostics((current) => [...current, `Test natif : OK${settings?.width ? ` · ${settings.width}×${settings.height}` : ""}`]);
+      appendDiagnostics(`Test natif : OK${settings?.width ? ` · ${settings.width}×${settings.height}` : ""}`);
     } catch (error) {
       setLastEvent("Test natif échoué · consultez le diagnostic");
       await collectDiagnostics(error);
@@ -177,6 +204,7 @@ export default function Home() {
       return;
     }
     setPermissionState("starting");
+    appendDiagnostics("Activation demandée · vérification du contexte et de la caméra");
     setLastEvent("Demande d’accès caméra…");
     try {
       const api = await loadWebGazer();
@@ -200,17 +228,18 @@ export default function Home() {
         if (data) processGaze(data);
       });
       const begin = () => api.begin((error) => {
-        console.error("WebGazer camera failure", error);
+        appendDiagnostics(["WebGazer callback d’échec", ...describeError(error)]);
         setPermissionState("blocked");
         setLastEvent("Accès caméra refusé par le navigateur");
       });
+      appendDiagnostics("WebGazer chargé · démarrage avec contraintes caméra minimales");
       try {
         await begin();
       } catch (firstError) {
         // Certains navigateurs custom renvoient UnknownError lorsque les
         // contraintes idéales sont refusées. Une seconde demande minimale
         // permet alors au navigateur de choisir sa caméra disponible.
-        console.warn("Retrying camera with minimal constraints", firstError);
+        appendDiagnostics(["Premier démarrage WebGazer échoué · nouvelle tentative", ...describeError(firstError)]);
         await api.setCameraConstraints?.({ audio: false, video: true });
         await begin();
       }
@@ -221,11 +250,12 @@ export default function Home() {
         video.autoplay = true;
         await video.play().catch(() => undefined);
       }
+      appendDiagnostics("WebGazer démarré avec succès · flux vidéo disponible");
       setTracking(true);
       setPermissionState("ready");
       setLastEvent("Suivi actif · calibration disponible");
     } catch (error) {
-      console.error(error);
+      appendDiagnostics(["Échec activation du regard", ...describeError(error)]);
       await collectDiagnostics(error);
       const name = error instanceof DOMException ? error.name : "UnknownError";
       const isContextBlocked = name === "NotAllowedError" || name === "SecurityError";
@@ -236,7 +266,7 @@ export default function Home() {
           : `Caméra indisponible (${name})`,
       );
     }
-  }, [loadWebGazer, permissionState, processGaze, tracking]);
+  }, [appendDiagnostics, collectDiagnostics, describeError, loadWebGazer, permissionState, processGaze, tracking]);
 
   const stopTracking = useCallback(() => {
     if (calibrationTimerRef.current) window.clearTimeout(calibrationTimerRef.current);
@@ -421,7 +451,10 @@ export default function Home() {
           <button className="adaptive-toggle" onClick={() => setAdaptiveMode((value) => !value)}><span className={`toggle-switch ${adaptiveMode ? "on" : ""}`}><i /></span><span>Compensation adaptative</span></button>
           <div className="camera-note"><Camera size={16} /><span>Webcam requise<br /><small>Chrome, Edge, Firefox, Safari</small></span></div>
           <button className="diagnostic-button" onClick={() => void runNativeCameraTest()}><ShieldCheck size={14} /> Tester l’accès natif</button>
-          {diagnostics.length > 0 && <div className="diagnostic-box" role="status"><div className="diagnostic-title">Diagnostic navigateur</div>{diagnostics.map((line) => <div key={line}>{line}</div>)}</div>}
+          <div className="diagnostic-box" role="log" aria-live="polite">
+            <div className="diagnostic-toolbar"><div className="diagnostic-title"><Clipboard size={12} /> Journal complet ({diagnostics.length})</div><div className="diagnostic-actions"><button type="button" title="Copier le journal" onClick={() => void copyDiagnostics()}><Copy size={12} /></button><button type="button" title="Effacer le journal" onClick={clearDiagnostics}><Trash2 size={12} /></button></div></div>
+            {diagnostics.length === 0 ? <div className="diagnostic-empty">Les événements caméra apparaîtront ici.</div> : diagnostics.map((line, index) => <div key={`${line}-${index}`}>{line}</div>)}
+          </div>
         </aside>
       </section>
 
