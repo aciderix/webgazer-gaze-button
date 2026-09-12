@@ -210,18 +210,10 @@ export default function Home() {
       const api = await loadWebGazer();
       webgazerRef.current = api;
       api.setRegression?.("ridge").setTracker?.("TFFacemesh");
-      // Les contraintes par défaut de WebGazer demandent au moins 320×240.
-      // Certains navigateurs mobiles/webviews refusent cette contrainte même
-      // après avoir accordé la permission. On laisse le navigateur choisir
-      // une caméra frontale compatible, avec une définition indicative.
-      await api.setCameraConstraints?.({
-        audio: false,
-        video: {
-          facingMode: { ideal: "user" },
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-      });
+      // Ne pas appeler setCameraConstraints avant begin(): WebGazer n'a pas
+      // encore créé son élément vidéo et son implémentation appelle alors
+      // setVideoViewerSize() sur un élément null.
+      appendDiagnostics("Contraintes WebGazer par défaut utilisées jusqu’à la création du flux vidéo");
       api.applyKalmanFilter?.(true).saveDataAcrossSessions?.(true);
       api.showVideoPreview?.(true).showFaceOverlay?.(false).showFaceFeedbackBox?.(false);
       api.setGazeListener((data) => {
@@ -254,12 +246,8 @@ export default function Home() {
       try {
         await begin();
       } catch (firstError) {
-        // Certains navigateurs custom renvoient UnknownError lorsque les
-        // contraintes idéales sont refusées. Une seconde demande minimale
-        // permet alors au navigateur de choisir sa caméra disponible.
-        appendDiagnostics(["Premier démarrage WebGazer échoué · nouvelle tentative", ...describeError(firstError)]);
-        await api.setCameraConstraints?.({ audio: false, video: true });
-        await begin();
+        appendDiagnostics(["Démarrage WebGazer échoué", ...describeError(firstError)]);
+        throw firstError;
       }
       const video = document.querySelector<HTMLVideoElement>("#webgazerVideoFeed");
       if (!video) {
