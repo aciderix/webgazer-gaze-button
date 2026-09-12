@@ -17,7 +17,7 @@ type WebGazerApi = {
   setRegression?: (name: string) => WebGazerApi;
   setTracker?: (name: string) => WebGazerApi;
   setCameraConstraints?: (constraints: MediaStreamConstraints) => Promise<WebGazerApi> | WebGazerApi;
-  setStaticVideo?: (video: HTMLVideoElement) => WebGazerApi;
+  setStaticVideo?: (stream: MediaStream) => WebGazerApi;
   recordScreenPosition?: (x: number, y: number, eventType?: string) => WebGazerApi;
 };
 
@@ -230,7 +230,7 @@ export default function Home() {
       await nativeVideo.play();
       const settings = nativeStream.getVideoTracks()[0]?.getSettings();
       appendDiagnostics(`Flux natif ouvert · ${settings?.width ?? "?"}×${settings?.height ?? "?"} · WebGazer utilisera ce flux`);
-      api.setStaticVideo?.(nativeVideo);
+      api.setStaticVideo?.(nativeStream);
       api.applyKalmanFilter?.(true).saveDataAcrossSessions?.(true);
       api.showVideoPreview?.(true).showFaceOverlay?.(false).showFaceFeedbackBox?.(false);
       api.setGazeListener((data) => {
