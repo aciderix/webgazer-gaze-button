@@ -62,6 +62,7 @@ export default function Home() {
   const [orientation, setOrientation] = useState(0);
   const [adaptiveMode, setAdaptiveMode] = useState(true);
   const [lastEvent, setLastEvent] = useState("En attente de la caméra");
+  const [diagnostics, setDiagnostics] = useState<string[]>([]);
 
   const gazeRef = useRef<GazePoint | null>(null);
   const smoothRef = useRef<GazePoint | null>(null);
@@ -75,6 +76,53 @@ export default function Home() {
 
   const calibrationPoint = CALIBRATION_POINTS[calibrationStep] ?? CALIBRATION_POINTS[0];
   const calibrationPercent = Math.round((calibrationStep / CALIBRATION_POINTS.length) * 100);
+
+  const collectDiagnostics = useCallback(async (error?: unknown) => {
+    const lines = [
+      `Contexte sécurisé : ${window.isSecureContext ? "oui" : "non"}`,
+      `Protocole : ${window.location.protocol} · hôte : ${window.location.hostname}`,
+      `Fenêtre principale : ${window.top === window.self ? "oui" : "non (iframe/webview)"}`,
+      `mediaDevices : ${navigator.mediaDevices ? "présent" : "absent"}`,
+      `getUserMedia : ${navigator.mediaDevices && "getUserMedia" in navigator.mediaDevices ? "présent" : "absent"}`,
+      `Navigateur : ${navigator.userAgent.slice(0, 110)}`,
+    ];
+    try {
+      const permission = await navigator.permissions?.query({ name: "camera" as PermissionName });
+      if (permission) lines.push(`Permission caméra : ${permission.state}`);
+    } catch {
+      lines.push("Permission caméra : API non disponible");
+    }
+    try {
+      const devices = await navigator.mediaDevices?.enumerateDevices();
+      const cameras = devices?.filter((device) => device.kind === "videoinput") ?? [];
+      lines.push(`Caméras détectées : ${cameras.length}${cameras.some((camera) => camera.label) ? " · libellés autorisés" : " · libellés masqués"}`);
+    } catch (deviceError) {
+      lines.push(`Énumération périphériques : ${deviceError instanceof Error ? deviceError.message : "échec"}`);
+    }
+    if (error) {
+      const name = error instanceof DOMException ? error.name : error instanceof Error ? error.name : "UnknownError";
+      const message = error instanceof Error && error.message ? error.message : "aucun message fourni par le navigateur";
+      lines.push(`Erreur exacte : ${name}`);
+      lines.push(`Message : ${message}`);
+    }
+    setDiagnostics(lines);
+    return lines;
+  }, []);
+
+  const runNativeCameraTest = useCallback(async () => {
+    setLastEvent("Test natif de la caméra en cours…");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+      const track = stream.getVideoTracks()[0];
+      const settings = track?.getSettings();
+      stream.getTracks().forEach((item) => item.stop());
+      setLastEvent("Test natif réussi · le blocage vient probablement de WebGazer ou de la webview");
+      setDiagnostics((current) => [...current, `Test natif : OK${settings?.width ? ` · ${settings.width}×${settings.height}` : ""}`]);
+    } catch (error) {
+      setLastEvent("Test natif échoué · consultez le diagnostic");
+      await collectDiagnostics(error);
+    }
+  }, [collectDiagnostics]);
 
   const loadWebGazer = useCallback(() => {
     return new Promise<WebGazerApi>((resolve, reject) => {
@@ -125,6 +173,7 @@ export default function Home() {
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setPermissionState("blocked");
       setLastEvent("Caméra indisponible : utilisez le domaine publié en HTTPS");
+      await collectDiagnostics();
       return;
     }
     setPermissionState("starting");
@@ -177,6 +226,7 @@ export default function Home() {
       setLastEvent("Suivi actif · calibration disponible");
     } catch (error) {
       console.error(error);
+      await collectDiagnostics(error);
       const name = error instanceof DOMException ? error.name : "UnknownError";
       const isContextBlocked = name === "NotAllowedError" || name === "SecurityError";
       setPermissionState(isContextBlocked ? "blocked" : "error");
@@ -370,12 +420,15 @@ export default function Home() {
           <div className="signal-row"><span><ShieldCheck size={14} /> traitement local</span><b>PRIVÉ</b></div>
           <button className="adaptive-toggle" onClick={() => setAdaptiveMode((value) => !value)}><span className={`toggle-switch ${adaptiveMode ? "on" : ""}`}><i /></span><span>Compensation adaptative</span></button>
           <div className="camera-note"><Camera size={16} /><span>Webcam requise<br /><small>Chrome, Edge, Firefox, Safari</small></span></div>
+          <button className="diagnostic-button" onClick={() => void runNativeCameraTest()}><ShieldCheck size={14} /> Tester l’accès natif</button>
+          {diagnostics.length > 0 && <div className="diagnostic-box" role="status"><div className="diagnostic-title">Diagnostic navigateur</div>{diagnostics.map((line) => <div key={line}>{line}</div>)}</div>}
         </aside>
       </section>
 
       <footer className="control-dock">
         <div className="dock-copy"><span className="dock-label">PROTOCOLE DE DÉMARRAGE</span><span>{tracking ? "Le signal est reçu. Vous pouvez recalibrer à tout moment." : "Autorisez la caméra pour commencer le suivi du regard."}</span></div>
         <div className="dock-actions">
+          <button className="secondary-button diagnostic-mobile" onClick={() => void runNativeCameraTest()}><ShieldCheck size={15} /> Diagnostic caméra</button>
           {tracking && <button className="secondary-button" onClick={stopTracking}><Pause size={15} /> Arrêter</button>}
           <button className="primary-button" onClick={tracking ? startCalibration : startTracking} disabled={permissionState === "starting"}><span className="button-icon">{tracking ? <RotateCcw size={15} /> : <Play size={15} />}</span>{permissionState === "starting" ? "Connexion…" : tracking ? "Recalibrer" : "Activer le regard"}</button>
         </div>
