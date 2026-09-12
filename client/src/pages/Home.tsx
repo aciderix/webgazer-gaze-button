@@ -227,10 +227,28 @@ export default function Home() {
       api.setGazeListener((data) => {
         if (data) processGaze(data);
       });
-      const begin = () => api.begin((error) => {
-        appendDiagnostics(["WebGazer callback d’échec", ...describeError(error)]);
-        setPermissionState("blocked");
-        setLastEvent("Accès caméra refusé par le navigateur");
+      const begin = () => new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const fail = (error?: unknown) => {
+          const actualError = error ?? new DOMException("WebGazer n’a pas obtenu de flux vidéo", "UnknownError");
+          appendDiagnostics(["WebGazer callback d’échec · flux vidéo absent", ...describeError(actualError)]);
+          setPermissionState("blocked");
+          setLastEvent("Accès caméra refusé ou flux vidéo indisponible");
+          if (!settled) {
+            settled = true;
+            reject(actualError);
+          }
+        };
+        try {
+          Promise.resolve(api.begin(fail)).then(() => {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          }, fail);
+        } catch (error) {
+          fail(error);
+        }
       });
       appendDiagnostics("WebGazer chargé · démarrage avec contraintes caméra minimales");
       try {
@@ -244,11 +262,20 @@ export default function Home() {
         await begin();
       }
       const video = document.querySelector<HTMLVideoElement>("#webgazerVideoFeed");
-      if (video) {
-        video.setAttribute("playsinline", "true");
-        video.muted = true;
-        video.autoplay = true;
-        await video.play().catch(() => undefined);
+      if (!video) {
+        appendDiagnostics("WebGazer terminé sans élément vidéo #webgazerVideoFeed");
+        throw new DOMException("WebGazer n’a créé aucun élément vidéo", "UnknownError");
+      }
+      video.setAttribute("playsinline", "true");
+      video.muted = true;
+      video.autoplay = true;
+      try {
+        await video.play();
+        const stream = video.srcObject instanceof MediaStream ? video.srcObject : null;
+        appendDiagnostics(`Élément vidéo prêt · état=${video.readyState} · pistes=${stream?.getVideoTracks().length ?? 0}`);
+      } catch (playError) {
+        appendDiagnostics(["Échec lecture du flux vidéo", ...describeError(playError)]);
+        throw playError;
       }
       appendDiagnostics("WebGazer démarré avec succès · flux vidéo disponible");
       setTracking(true);
