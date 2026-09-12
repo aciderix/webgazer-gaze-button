@@ -16,6 +16,7 @@ type WebGazerApi = {
   saveDataAcrossSessions?: (value: boolean) => WebGazerApi;
   setRegression?: (name: string) => WebGazerApi;
   setTracker?: (name: string) => WebGazerApi;
+  setCameraConstraints?: (constraints: MediaStreamConstraints) => Promise<WebGazerApi> | WebGazerApi;
   recordScreenPosition?: (x: number, y: number, eventType?: string) => WebGazerApi;
 };
 
@@ -121,29 +122,59 @@ export default function Home() {
 
   const startTracking = useCallback(async () => {
     if (tracking || permissionState === "starting") return;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setPermissionState("blocked");
+      setLastEvent("Caméra indisponible : utilisez le domaine publié en HTTPS");
+      return;
+    }
     setPermissionState("starting");
     setLastEvent("Demande d’accès caméra…");
     try {
       const api = await loadWebGazer();
       webgazerRef.current = api;
       api.setRegression?.("ridge").setTracker?.("TFFacemesh");
+      // Les contraintes par défaut de WebGazer demandent au moins 320×240.
+      // Certains navigateurs mobiles/webviews refusent cette contrainte même
+      // après avoir accordé la permission. On laisse le navigateur choisir
+      // une caméra frontale compatible, avec une définition indicative.
+      await api.setCameraConstraints?.({
+        audio: false,
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        },
+      });
       api.applyKalmanFilter?.(true).saveDataAcrossSessions?.(true);
       api.showVideoPreview?.(true).showFaceOverlay?.(false).showFaceFeedbackBox?.(false);
       api.setGazeListener((data) => {
         if (data) processGaze(data);
       });
       await api.begin((error) => {
-        console.error(error);
+        console.error("WebGazer camera failure", error);
         setPermissionState("blocked");
-        setLastEvent("Accès caméra refusé");
+        setLastEvent("Accès caméra refusé par le navigateur");
       });
+      const video = document.querySelector<HTMLVideoElement>("#webgazerVideoFeed");
+      if (video) {
+        video.setAttribute("playsinline", "true");
+        video.muted = true;
+        video.autoplay = true;
+        await video.play().catch(() => undefined);
+      }
       setTracking(true);
       setPermissionState("ready");
       setLastEvent("Suivi actif · calibration disponible");
     } catch (error) {
       console.error(error);
-      setPermissionState("error");
-      setLastEvent("La caméra n’a pas pu démarrer");
+      const name = error instanceof DOMException ? error.name : "UnknownError";
+      const isContextBlocked = name === "NotAllowedError" || name === "SecurityError";
+      setPermissionState(isContextBlocked ? "blocked" : "error");
+      setLastEvent(
+        isContextBlocked
+          ? "Permission refusée : ouvrez le domaine publié dans un onglet HTTPS"
+          : `Caméra indisponible (${name})`,
+      );
     }
   }, [loadWebGazer, permissionState, processGaze, tracking]);
 
