@@ -493,6 +493,12 @@ export default function Home() {
           <button className="primary-button" onClick={tracking ? startCalibration : startTracking} disabled={permissionState === "starting"}><span className="button-icon">{tracking ? <RotateCcw size={15} /> : <Play size={15} />}</span>{permissionState === "starting" ? "Connexion…" : tracking ? "Recalibrer" : "Activer le regard"}</button>
         </div>
         {tracking && <div className="calibration-progress"><span style={{ width: `${calibrating ? Math.max(8, calibrationPercent) : 100}%` }} /></div>}
+        <div className="diagnostic-mobile-panel">
+          <div className="diagnostic-box" role="log" aria-live="polite">
+            <div className="diagnostic-toolbar"><div className="diagnostic-title"><Clipboard size={12} /> Journal complet ({diagnostics.length})</div><div className="diagnostic-actions"><button type="button" title="Copier le journal" onClick={() => void copyDiagnostics()}><Copy size={12} /></button><button type="button" title="Effacer le journal" onClick={clearDiagnostics}><Trash2 size={12} /></button></div></div>
+            {diagnostics.length === 0 ? <div className="diagnostic-empty">Les événements caméra apparaîtront ici.</div> : diagnostics.map((line, index) => <div key={`mobile-${line}-${index}`}>{line}</div>)}
+          </div>
+        </div>
       </footer>
     </main>
   );
